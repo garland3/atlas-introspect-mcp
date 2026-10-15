@@ -70,6 +70,15 @@ def main() -> None:
         help="Header ATLAS reads the user identity from. Default: X-User-Email",
     )
     parser.add_argument(
+        "--proxy-secret-header",
+        default=os.environ.get("ATLAS_PROXY_SECRET_HEADER", "X-Proxy-Secret"),
+        help=(
+            "Header carrying the ATLAS proxy secret. Must match PROXY_SECRET_HEADER. "
+            "The secret itself is read from ATLAS_PROXY_SECRET in the environment, "
+            "never from argv, which is world-readable in ps. Default: X-Proxy-Secret"
+        ),
+    )
+    parser.add_argument(
         "--atlas-home",
         type=Path,
         default=atlas_home,
@@ -135,6 +144,8 @@ def main() -> None:
             base_url=args.atlas_url.rstrip("/"),
             user_email=args.user,
             auth_header=args.auth_header,
+            proxy_secret=os.environ.get("ATLAS_PROXY_SECRET") or None,
+            proxy_secret_header=args.proxy_secret_header,
             config_dir=Path(config_dir).expanduser().resolve(),
             prompts_dir=Path(prompts_dir).expanduser().resolve(),
             timeout=args.timeout,

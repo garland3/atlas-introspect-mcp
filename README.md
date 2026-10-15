@@ -10,6 +10,7 @@ at — and edit — itself:
 | **workspaces** | list, create, update, delete | ATLAS REST API |
 | **custom prompts** | the per-user prompt library | ATLAS REST API |
 | **prompt files** | the on-disk `prompts/*.md` defaults | on disk, backed up |
+| **daemon journal** | tail the last N lines of the `atlas` systemd unit | `journalctl --user` (read-only) |
 
 ## Why it goes through the HTTP API
 
@@ -123,6 +124,8 @@ Every flag has an environment-variable equivalent.
 **On-disk prompt files** — `list_prompt_files`, `read_prompt_file`,
 `write_prompt_file`
 
+**Daemon journal (read-only)** — `tail_atlas_journal`
+
 **Health** — `atlas_status`
 
 ## Things that will bite
@@ -138,6 +141,12 @@ Every flag has an environment-variable equivalent.
   and a prompt's `content`.
 - **Conversation tools are read-only by design.** There are delete endpoints in
   ATLAS; they are deliberately not exposed here.
+- **`tail_atlas_journal` shells out to `journalctl --user`.** It is read-only
+  (not gated by `--read-only`, which only covers mutating tools) and returns a
+  snapshot of the last N lines — it does not follow. It needs the user session
+  bus; the running daemon's children inherit that, and the tool falls back to
+  `/run/user/<uid>` when `XDG_RUNTIME_DIR` is missing. `unit` defaults to
+  `atlas` but accepts any `--user` unit (e.g. `osii-mcp`).
 - **`write_prompt_file` changes every chat in the instance.** It backs up first
   and, like `mcp.json`, applies on the next restart.
 
