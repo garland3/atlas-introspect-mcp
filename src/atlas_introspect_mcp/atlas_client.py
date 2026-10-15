@@ -26,7 +26,13 @@ class AtlasError(RuntimeError):
 
 def _headers() -> dict[str, str]:
     cfg = get_config()
-    return {cfg.auth_header: cfg.user_email, "Accept": "application/json"}
+    headers = {cfg.auth_header: cfg.user_email, "Accept": "application/json"}
+    # Outside DEBUG_MODE, ATLAS's proxy-secret gate rejects any request that
+    # carries neither a browser session nor this header. Omitted entirely when
+    # unset so a debug-mode instance is unaffected.
+    if cfg.proxy_secret:
+        headers[cfg.proxy_secret_header] = cfg.proxy_secret
+    return headers
 
 
 async def request(

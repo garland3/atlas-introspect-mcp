@@ -39,6 +39,19 @@ class ServerConfig:
     read_only: bool
     """When true, every mutating tool refuses instead of writing."""
 
+    proxy_secret: str | None = None
+    """Shared secret proving this client is a trusted front end.
+
+    ATLAS enables the proxy-secret gate by default outside DEBUG_MODE and
+    rejects any request carrying neither a browser session nor this header,
+    so a loopback client like this one must present it. Read from the
+    environment rather than argv: process arguments are world-readable in
+    ``ps``. Defaults to None so a DEBUG_MODE instance is unaffected.
+    """
+
+    proxy_secret_header: str = "X-Proxy-Secret"
+    """Header carrying ``proxy_secret``. Must match ATLAS's PROXY_SECRET_HEADER."""
+
     @property
     def mcp_json_path(self) -> Path:
         return self.config_dir / "mcp.json"

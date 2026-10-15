@@ -30,6 +30,7 @@ async def test_every_tool_is_registered():
         "list_workspaces",
         "list_custom_prompts",
         "write_prompt_file",
+        "tail_atlas_journal",
     ):
         assert expected in names
 
@@ -107,3 +108,25 @@ async def test_clip_marks_truncation(tmp_path):
     clipped = server._clip("x" * 50, limit=10)
     assert clipped.startswith("x" * 10)
     assert "40 more characters" in clipped
+
+
+def test_journalctl_argv_shape():
+    assert server._journalctl_argv(150, "atlas") == [
+        "journalctl", "--user", "-u", "atlas", "-n", "150", "--no-pager",
+    ]
+
+
+def test_journalctl_argv_other_unit():
+    assert "-u" in server._journalctl_argv(50, "osii-mcp")
+    assert "osii-mcp" in server._journalctl_argv(50, "osii-mcp")
+
+
+@pytest.mark.parametrize("value, expected", [
+    (-5, 1),
+    (0, 1),
+    (1, 1),
+    (150, 150),
+    (50_000, server._JOURNAL_MAX_LINES),
+])
+def test_clamp_lines(value, expected):
+    assert server._clamp_lines(value) == expected

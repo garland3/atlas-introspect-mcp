@@ -11,6 +11,7 @@ Four surfaces, one per thing an operator actually wants to poke at:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -27,9 +28,9 @@ mcp = FastMCP(
     "atlas-introspect",
     instructions=(
         "Introspect and configure the running ATLAS instance: browse chat "
-        "history, read and edit config/mcp.json, and manage workspaces and "
-        "custom prompts. Conversation tools are read-only. mcp.json edits need "
-        "an ATLAS restart to take effect."
+        "history, read and edit config/mcp.json, manage workspaces and custom "
+        "prompts, and tail the daemon journal. Conversation tools are "
+        "read-only. mcp.json edits need an ATLAS restart to take effect."
     ),
 )
 
@@ -585,6 +586,91 @@ async def write_prompt_file(name: str, content: str) -> dict[str, Any]:
         "chars": len(content),
         "backup": str(backup) if backup else None,
         "note": "Applies on the next ATLAS restart (`systemctl --user restart atlas`).",
+    }
+
+
+# --------------------------------------------------------------------------
+# journal (read-only)
+# --------------------------------------------------------------------------
+
+# Clamp for the journal tail. journalctl has its own upper bound, but a model
+# asking for a million lines would still try to drag them all through stdio
+# before we clipped them, so cap the fetch too.
+_JOURNAL_MAX_LINES = 10000
+
+
+def _clamp_lines(lines: int) -> int:
+    """Keep a requested line count inside a sane window."""
+    if lines < 1:
+        return 1
+    if lines > _JOURNAL_MAX_LINES:
+        return _JOURNAL_MAX_LINES
+    return lines
+
+
+def _journalctl_argv(lines: int, unit: str) -> list[str]:
+    """Build the journalctl invocation for the given user unit."""
+    return ["journalctl", "--user", "-u", unit, "-n", str(lines), "--no-pager"]
+
+
+def _journal_env() -> dict[str, str]:
+    """Environment for ``journalctl --user`` from a spawned subprocess.
+
+    ATLAS is a systemd --user service, so it (and the MCP children it spawns)
+    already inherits ``XDG_RUNTIME_DIR`` and ``DBUS_SESSION_BUS_ADDRESS``.
+    Other launch paths -- a bare shell, a test, an exec from outside the
+    session -- may not, and ``journalctl --user`` then fails with "No journal
+    files were found" / "Failed to determine bus address". Fall back to the
+    per-uid runtime dir the same way ``redeploy.sh`` does.
+    """
+    env = dict(os.environ)
+    if not env.get("XDG_RUNTIME_DIR"):
+        env["XDG_RUNTIME_DIR"] = f"/run/user/{os.getuid()}"
+    runtime = env["XDG_RUNTIME_DIR"]
+    if not env.get("DBUS_SESSION_BUS_ADDRESS") and os.path.exists(f"{runtime}/bus"):
+        env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={runtime}/bus"
+    return env
+
+
+@mcp.tool
+async def tail_atlas_journal(lines: int = 150, unit: str = "atlas") -> dict[str, Any]:
+    """Return the last N lines of the ATLAS daemon journal.
+
+    Reads the systemd --user journal for the unit via ``journalctl --user``.
+    This is a snapshot, not a live follow -- an MCP tool returns once. Use it
+    when a tool call failed and you want to see what ATLAS logged, or to check
+    whether the daemon restarted recently.
+
+    Args:
+        lines: How many trailing lines to fetch (clamped to 1-10000). Default 150.
+        unit: systemd --user unit name. Default "atlas" (the prod daemon on
+            :8090). Point at e.g. "osii-mcp" to read a sibling server's log.
+    """
+    import asyncio
+
+    count = _clamp_lines(lines)
+    argv = _journalctl_argv(count, unit)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=_journal_env(),
+        )
+    except FileNotFoundError as exc:
+        raise ToolError(f"journalctl not found on PATH: {exc}") from exc
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise ToolError(
+            f"journalctl exited {proc.returncode} for unit '{unit}': "
+            f"{stderr.decode(errors='replace').strip() or '(no stderr)'}"
+        )
+    text = stdout.decode(errors="replace")
+    return {
+        "unit": unit,
+        "lines_requested": count,
+        "lines_returned": len(text.splitlines()),
+        "journal": _clip(text),
     }
 
 
